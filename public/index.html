@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MJAPANI SESSION</title>
+<style>
+  :root{
+    --bg:#0d0b14; --card:#161320; --accent:#a259ff; --accent2:#7c3aed;
+    --text:#f1eefb; --muted:#9b93b5; --ok:#22c55e; --err:#ef4444;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; min-height:100vh; background:radial-gradient(circle at top,#1b1730,#0d0b14 60%);
+    color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    display:flex; align-items:flex-start; justify-content:center; padding:32px 16px;
+  }
+  .wrap{max-width:420px; width:100%}
+  .logo{text-align:center; margin-bottom:18px}
+  .logo h1{font-size:26px; margin:0; letter-spacing:1px}
+  .logo span{color:var(--accent)}
+  .logo p{color:var(--muted); font-size:13px; margin:6px 0 0}
+  .card{
+    background:var(--card); border:1px solid #2a2440; border-radius:18px;
+    padding:22px; box-shadow:0 10px 30px rgba(0,0,0,.4);
+  }
+  .tabs{display:flex; gap:8px; margin-bottom:18px; background:#0f0d1a; padding:4px; border-radius:12px}
+  .tab{
+    flex:1; text-align:center; padding:10px; border-radius:9px; cursor:pointer;
+    color:var(--muted); font-weight:600; font-size:14px; transition:.15s;
+  }
+  .tab.active{background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff}
+  .panel{display:none}
+  .panel.active{display:block}
+  input[type=text]{
+    width:100%; padding:12px 14px; border-radius:10px; border:1px solid #332c52;
+    background:#0f0d1a; color:var(--text); font-size:15px; outline:none;
+  }
+  input[type=text]:focus{border-color:var(--accent)}
+  label{font-size:13px; color:var(--muted); display:block; margin-bottom:6px}
+  button.primary{
+    width:100%; margin-top:14px; padding:13px; border:none; border-radius:10px;
+    background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff;
+    font-size:15px; font-weight:700; cursor:pointer;
+  }
+  button.primary:disabled{opacity:.5}
+  .qr-box{text-align:center; margin-top:16px}
+  .qr-box img{width:220px; height:220px; border-radius:12px; background:#fff; padding:8px}
+  .code-box{
+    text-align:center; margin-top:16px; font-size:30px; letter-spacing:6px;
+    font-weight:800; background:#0f0d1a; border:1px dashed var(--accent); border-radius:12px; padding:18px;
+  }
+  .status{text-align:center; color:var(--muted); font-size:13px; margin-top:12px; min-height:18px}
+  .status.err{color:var(--err)}
+  .status.ok{color:var(--ok)}
+  .session-box{margin-top:16px}
+  textarea{
+    width:100%; min-height:110px; background:#0f0d1a; color:var(--ok); border:1px solid #243523;
+    border-radius:10px; padding:12px; font-size:12px; word-break:break-all; resize:vertical;
+  }
+  .copy-btn{
+    width:100%; margin-top:10px; padding:12px; border-radius:10px; border:1px solid var(--ok);
+    background:transparent; color:var(--ok); font-weight:700; cursor:pointer;
+  }
+  .warn{font-size:12px; color:var(--muted); margin-top:10px; line-height:1.5}
+  .hidden{display:none}
+  .spinner{
+    width:16px; height:16px; border:2px solid rgba(255,255,255,.3); border-top-color:#fff;
+    border-radius:50%; display:inline-block; animation:spin .8s linear infinite; vertical-align:-3px; margin-right:6px;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  footer{text-align:center; color:var(--muted); font-size:12px; margin-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">
+    <h1>MJAPANI<span> SESSION</span></h1>
+    <p>Pata SESSION ID yako ya WhatsApp bot kwa haraka</p>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <div class="tab active" data-mode="qr">QR Code</div>
+      <div class="tab" data-mode="pair">Namba ya Simu</div>
+    </div>
+
+    <div class="panel active" id="panel-qr">
+      <p class="warn">Fungua WhatsApp → Mipangilio → Vifaa vilivyounganishwa → Unganisha kifaa, kisha skani QR itakayotokea hapa chini.</p>
+      <button class="primary" id="btn-qr">Anza (Pata QR)</button>
+      <div class="qr-box hidden" id="qr-box"><img id="qr-img" alt="QR Code"></div>
+    </div>
+
+    <div class="panel" id="panel-pair">
+      <label>Namba ya WhatsApp (bila +, mfano 255712345678)</label>
+      <input type="text" id="phone" placeholder="255712345678" inputmode="numeric">
+      <button class="primary" id="btn-pair">Pata Pairing Code</button>
+      <div class="code-box hidden" id="code-box"></div>
+      <p class="warn hidden" id="pair-hint">Fungua WhatsApp → Vifaa vilivyounganishwa → Unganisha kifaa → "Unganisha kwa namba ya simu" → ingiza code hii.</p>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="session-box hidden" id="session-box">
+      <label>SESSION ID yako — IHIFADHI SALAMA</label>
+      <textarea id="session-text" readonly></textarea>
+      <button class="copy-btn" id="copy-btn">📋 Copy SESSION ID</button>
+      <p class="warn">Bandika hii kwenye Railway Variable <b>SESSION_ID</b> ya bot yako. Yeyote mwenye hii anaweza kuingia WhatsApp yako — usimtumie mtu yeyote.</p>
+    </div>
+  </div>
+
+  <footer>MJAPANI SESSION · tovuti binafsi ya kutengeneza session</footer>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('.tab');
+  const panels = { qr: document.getElementById('panel-qr'), pair: document.getElementById('panel-pair') };
+  tabs.forEach(t => t.addEventListener('click', () => {
+    tabs.forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    Object.values(panels).forEach(p => p.classList.remove('active'));
+    panels[t.dataset.mode].classList.add('active');
+    setStatus('');
+  }));
+
+  const statusEl = document.getElementById('status');
+  function setStatus(msg, type) {
+    statusEl.textContent = msg || '';
+    statusEl.className = 'status' + (type ? ' ' + type : '');
+  }
+
+  function listen(id) {
+    const es = new EventSource('/api/events/' + id);
+    es.addEventListener('qr', e => {
+      const { image } = JSON.parse(e.data);
+      document.getElementById('qr-box').classList.remove('hidden');
+      document.getElementById('qr-img').src = image;
+      setStatus('Skani QR hii haraka kabla haijaisha muda…');
+    });
+    es.addEventListener('code', e => {
+      const { code } = JSON.parse(e.data);
+      const box = document.getElementById('code-box');
+      box.textContent = code;
+      box.classList.remove('hidden');
+      document.getElementById('pair-hint').classList.remove('hidden');
+      setStatus('Ingiza code hii WhatsApp yako sasa…');
+    });
+    es.addEventListener('session', e => {
+      const { sessionId } = JSON.parse(e.data);
+      document.getElementById('session-box').classList.remove('hidden');
+      document.getElementById('session-text').value = sessionId;
+      setStatus('✅ Umeunganishwa! SESSION ID iko tayari.', 'ok');
+      es.close();
+    });
+    es.addEventListener('error', e => {
+      const { message } = JSON.parse(e.data);
+      setStatus('❌ ' + message, 'err');
+      es.close();
+    });
+  }
+
+  document.getElementById('btn-qr').addEventListener('click', async () => {
+    setStatus('Inatengeneza QR…');
+    const r = await fetch('/api/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'qr' })
+    });
+    const j = await r.json();
+    if (!r.ok) return setStatus('❌ ' + j.error, 'err');
+    listen(j.id);
+  });
+
+  document.getElementById('btn-pair').addEventListener('click', async () => {
+    const number = document.getElementById('phone').value.trim();
+    setStatus('Inatengeneza pairing code…');
+    const r = await fetch('/api/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'pair', number })
+    });
+    const j = await r.json();
+    if (!r.ok) return setStatus('❌ ' + j.error, 'err');
+    listen(j.id);
+  });
+
+  document.getElementById('copy-btn').addEventListener('click', () => {
+    const ta = document.getElementById('session-text');
+    ta.select();
+    navigator.clipboard?.writeText(ta.value);
+    setStatus('✅ Imenakiliwa (copied)!', 'ok');
+  });
+</script>
+</body>
+</html>
