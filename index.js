@@ -5,21 +5,40 @@ import crypto from 'crypto';
 import QRCode from 'qrcode';
 import pino from 'pino';
 import baileysPkg, {
-  useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason
+  useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, Browsers, jidNormalizedUser
 } from '@whiskeysockets/baileys';
 const makeWASocket = baileysPkg.default || baileysPkg;
 
 const app = express();
-app.use(express.json());
-app.use(express.static(path.join(process.cwd(), 'public')));
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '2kb' }));
+app.use(express.static(path.join(process.cwd(), 'public'), { maxAge: '1h' }));
 
 const TMP = '/tmp/mjapani-sessions';
 fs.mkdirSync(TMP, { recursive: true });
 
+const MAX_ACTIVE = 15;           // max simultaneous linking attempts
+const PER_IP_PER_10MIN = 6;      // max attempts per IP
+const SESSION_TTL_MS = 3 * 60 * 1000;
+
 // id -> { dir, clients:Set(res), status, sock, pairingNumber, pairingRequested, killed }
 const sessions = new Map();
+const hits = new Map(); // ip -> [timestamps]
+
+function rateLimited(ip) {
+  const now = Date.now();
+  const list = (hits.get(ip) || []).filter(t => now - t < 10 * 60 * 1000);
+  list.push(now);
+  hits.set(ip, list);
+  return list.length > PER_IP_PER_10MIN;
+}
+setInterval(() => { // clean old entries
+  const now = Date.now();
+  for (const [ip, list] of hits) if (!list.some(t => now - t < 10 * 60 * 1000)) hits.delete(ip);
+}, 5 * 60 * 1000).unref();
 
 function sendEvent(session, event, data) {
+  session.last = { event, data }; // so late SSE clients still get the latest state
   const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of session.clients) { try { res.write(msg); } catch {} }
 }
@@ -29,7 +48,9 @@ function killSession(id, delay = 1000) {
   if (!s || s.killed) return;
   s.killed = true;
   setTimeout(() => {
-    try { s.sock?.end?.(); } catch {}
+    try { s.sock?.ws?.close(); } catch {}
+    try { s.sock?.end?.(undefined); } catch {}
+    for (const res of s.clients) { try { res.end(); } catch {} }
     fs.rm(s.dir, { recursive: true, force: true }, () => {});
     sessions.delete(id);
   }, delay);
@@ -42,63 +63,80 @@ async function connect(id) {
   const { state, saveCreds } = await useMultiFileAuthState(session.dir);
   const { version } = await fetchLatestBaileysVersion();
   const sock = makeWASocket({
-    version, auth: state, logger: pino({ level: 'silent' }),
-    printQRInTerminal: false, browser: ['MJAPANI SESSION', 'Chrome', '1.0.0']
+    version,
+    auth: state,
+    logger: pino({ level: 'silent' }),
+    printQRInTerminal: false,
+    // Must be a standard browser identity, otherwise WhatsApp rejects pairing codes
+    browser: Browsers.ubuntu('Chrome'),
+    syncFullHistory: false,
+    markOnlineOnConnect: false
   });
   session.sock = sock;
   sock.ev.on('creds.update', saveCreds);
 
-  if (session.pairingNumber && !sock.authState.creds.registered && !session.pairingRequested) {
-    setTimeout(async () => {
-      if (session.killed) return;
-      try {
-        const code = await sock.requestPairingCode(session.pairingNumber.replace(/\D/g, ''));
-        session.pairingRequested = true;
-        session.status = 'code';
-        sendEvent(session, 'code', { code });
-      } catch (e) {
-        sendEvent(session, 'error', { message: 'Imeshindikana kutengeneza pairing code: ' + e.message });
-        killSession(id, 500);
-      }
-    }, 2500);
-  }
-
   sock.ev.on('connection.update', async (u) => {
     const { connection, qr, lastDisconnect } = u;
 
-    if (qr && !session.pairingNumber && session.status !== 'connected') {
-      try {
-        const dataUrl = await QRCode.toDataURL(qr, { margin: 1, scale: 6 });
-        session.status = 'qr';
-        sendEvent(session, 'qr', { image: dataUrl });
-      } catch {}
+    // WhatsApp sends a "qr" once the handshake is ready: that is the right moment to ask for a pairing code
+    if (qr && session.status !== 'connected') {
+      if (session.pairingNumber) {
+        if (!session.pairingRequested && !sock.authState.creds.registered) {
+          session.pairingRequested = true;
+          try {
+            const raw = await sock.requestPairingCode(session.pairingNumber);
+            const code = raw.match(/.{1,4}/g).join('-');
+            session.status = 'code';
+            sendEvent(session, 'code', { code });
+          } catch (e) {
+            sendEvent(session, 'fail', { message: 'Could not create a pairing code. Please try again.' });
+            killSession(id, 500);
+          }
+        }
+      } else {
+        try {
+          const image = await QRCode.toDataURL(qr, { margin: 1, scale: 6 });
+          session.status = 'qr';
+          sendEvent(session, 'qr', { image });
+        } catch {}
+      }
     }
 
     if (connection === 'open') {
+      if (session.status === 'connected') return;
+      session.status = 'connected';
       try {
-        const credsPath = path.join(session.dir, 'creds.json');
-        const json = fs.readFileSync(credsPath, 'utf8');
+        // make sure creds are on disk before reading them
+        await saveCreds();
+        const json = fs.readFileSync(path.join(session.dir, 'creds.json'), 'utf8');
         const sid = 'MJAPANI~' + Buffer.from(json).toString('base64');
-        session.status = 'connected';
         sendEvent(session, 'session', { sessionId: sid });
+
+        // Also deliver it straight to the user's own WhatsApp chat
+        try {
+          const me = jidNormalizedUser(sock.user.id);
+          await sock.sendMessage(me, { text: sid });
+          await sock.sendMessage(me, {
+            text: '✅ *MJAPANI SESSION*\nThe message above is your SESSION ID.\nPaste it in your bot as the variable *SESSION_ID*.\n⚠️ Never share it with anyone.'
+          });
+        } catch {}
       } catch (e) {
-        sendEvent(session, 'error', { message: 'Imeunganika lakini kusoma session kumeshindikana: ' + e.message });
+        sendEvent(session, 'fail', { message: 'Linked, but the session could not be read. Please try again.' });
       }
-      killSession(id, 4000);
+      killSession(id, 8000);
       return;
     }
 
     if (connection === 'close') {
-      if (session.status === 'connected' || session.killed) return; // tayari imekamilika au imefungwa
+      if (session.status === 'connected' || session.killed) return;
       const code = lastDisconnect?.error?.output?.statusCode;
       if (code === DisconnectReason.loggedOut) {
-        sendEvent(session, 'error', { message: 'Kiungo kimekataliwa na WhatsApp. Bonyeza "Anza upya".' });
+        sendEvent(session, 'fail', { message: 'WhatsApp rejected the link. Please start again.' });
         killSession(id, 500);
         return;
       }
-      // Muunganiko wa kawaida unaokatika wakati wa mchakato wa QR/pairing - unganisha upya
-      // kimya kimya, bila kumwambia mtumiaji ni hitilafu.
-      setTimeout(() => connect(id), 1200);
+      // Normal restart during linking (e.g. after the code is accepted): reconnect quietly
+      setTimeout(() => connect(id).catch(() => {}), 1200);
     }
   });
 }
@@ -107,33 +145,37 @@ async function startSession(id, { pairingNumber } = {}) {
   const dir = path.join(TMP, id);
   fs.mkdirSync(dir, { recursive: true });
   const session = {
-    dir, clients: new Set(), status: 'starting', sock: null,
+    dir, clients: new Set(), status: 'starting', sock: null, last: null,
     pairingNumber: pairingNumber || null, pairingRequested: false, killed: false
   };
   sessions.set(id, session);
   await connect(id);
-  // usalama: futa session ikiwa haijakamilika ndani ya dakika 3
   setTimeout(() => {
     const s = sessions.get(id);
     if (s && s.status !== 'connected') {
-      sendEvent(s, 'error', { message: 'Muda umeisha. Bonyeza "Anza upya" ujaribu tena.' });
+      sendEvent(s, 'fail', { message: 'Time expired. Please start again.' });
       killSession(id, 500);
     }
-  }, 3 * 60 * 1000);
+  }, SESSION_TTL_MS);
   return session;
 }
 
 app.post('/api/start', async (req, res) => {
-  const id = crypto.randomBytes(8).toString('hex');
+  if (rateLimited(req.ip)) return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes.' });
+  if (sessions.size >= MAX_ACTIVE) return res.status(503).json({ error: 'Server is busy. Please try again in a minute.' });
+
   const { mode, number } = req.body || {};
-  if (mode === 'pair' && !/^\d{9,15}$/.test((number || '').replace(/\D/g, ''))) {
-    return res.status(400).json({ error: 'Namba si sahihi. Tumia mfano 255712345678 (bila +).' });
+  const digits = String(number || '').replace(/\D/g, '');
+  if (mode === 'pair' && !/^[1-9]\d{8,14}$/.test(digits)) {
+    return res.status(400).json({ error: 'Enter your number with country code, no + or 0 (e.g. 255712345678).' });
   }
+  const id = crypto.randomBytes(8).toString('hex');
   try {
-    await startSession(id, mode === 'pair' ? { pairingNumber: number } : {});
+    await startSession(id, mode === 'pair' ? { pairingNumber: digits } : {});
     res.json({ id });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.log('start error:', e.message);
+    res.status(500).json({ error: 'Could not start. Please try again.' });
   }
 });
 
@@ -142,13 +184,21 @@ app.get('/api/events/:id', (req, res) => {
   if (!session) return res.status(404).end();
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive'
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no'
   });
-  res.write('\n');
+  res.write('retry: 3000\n\n');
   session.clients.add(res);
-  req.on('close', () => session.clients.delete(res));
+  if (session.last) res.write(`event: ${session.last.event}\ndata: ${JSON.stringify(session.last.data)}\n\n`);
+  const beat = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
+  req.on('close', () => { clearInterval(beat); session.clients.delete(res); });
 });
 
+app.get('/health', (_req, res) => res.json({ ok: true, active: sessions.size }));
+
+process.on('unhandledRejection', e => console.log('unhandledRejection:', e?.message || e));
+process.on('uncaughtException', e => console.log('uncaughtException:', e?.message || e));
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('MJAPANI SESSION seva inaendesha kwenye port ' + PORT));
+app.listen(PORT, '0.0.0.0', () => console.log('MJAPANI SESSION listening on ' + PORT));
