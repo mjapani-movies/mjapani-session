@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import QRCode from 'qrcode';
 import pino from 'pino';
 import baileysPkg, {
-  useMultiFileAuthState, fetchLatestBaileysVersion
+  useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason
 } from '@whiskeysockets/baileys';
 const makeWASocket = baileysPkg.default || baileysPkg;
 
@@ -16,7 +16,7 @@ app.use(express.static(path.join(process.cwd(), 'public')));
 const TMP = '/tmp/mjapani-sessions';
 fs.mkdirSync(TMP, { recursive: true });
 
-// id -> { dir, clients:Set(res), status, sock }
+// id -> { dir, clients:Set(res), status, sock, pairingNumber, pairingRequested, killed }
 const sessions = new Map();
 
 function sendEvent(session, event, data) {
@@ -24,9 +24,10 @@ function sendEvent(session, event, data) {
   for (const res of session.clients) { try { res.write(msg); } catch {} }
 }
 
-function destroySession(id, delay = 3000) {
+function killSession(id, delay = 1000) {
   const s = sessions.get(id);
-  if (!s) return;
+  if (!s || s.killed) return;
+  s.killed = true;
   setTimeout(() => {
     try { s.sock?.end?.(); } catch {}
     fs.rm(s.dir, { recursive: true, force: true }, () => {});
@@ -34,13 +35,11 @@ function destroySession(id, delay = 3000) {
   }, delay);
 }
 
-async function startSession(id, { pairingNumber } = {}) {
-  const dir = path.join(TMP, id);
-  fs.mkdirSync(dir, { recursive: true });
-  const session = { dir, clients: new Set(), status: 'starting', sock: null };
-  sessions.set(id, session);
+async function connect(id) {
+  const session = sessions.get(id);
+  if (!session || session.killed) return;
 
-  const { state, saveCreds } = await useMultiFileAuthState(dir);
+  const { state, saveCreds } = await useMultiFileAuthState(session.dir);
   const { version } = await fetchLatestBaileysVersion();
   const sock = makeWASocket({
     version, auth: state, logger: pino({ level: 'silent' }),
@@ -49,33 +48,35 @@ async function startSession(id, { pairingNumber } = {}) {
   session.sock = sock;
   sock.ev.on('creds.update', saveCreds);
 
-  if (pairingNumber) {
+  if (session.pairingNumber && !sock.authState.creds.registered && !session.pairingRequested) {
     setTimeout(async () => {
+      if (session.killed) return;
       try {
-        if (!sock.authState.creds.registered) {
-          const code = await sock.requestPairingCode(pairingNumber.replace(/\D/g, ''));
-          session.status = 'code';
-          sendEvent(session, 'code', { code });
-        }
+        const code = await sock.requestPairingCode(session.pairingNumber.replace(/\D/g, ''));
+        session.pairingRequested = true;
+        session.status = 'code';
+        sendEvent(session, 'code', { code });
       } catch (e) {
         sendEvent(session, 'error', { message: 'Imeshindikana kutengeneza pairing code: ' + e.message });
-        destroySession(id, 1000);
+        killSession(id, 500);
       }
     }, 2500);
   }
 
   sock.ev.on('connection.update', async (u) => {
     const { connection, qr, lastDisconnect } = u;
-    if (qr && !pairingNumber) {
+
+    if (qr && !session.pairingNumber && session.status !== 'connected') {
       try {
         const dataUrl = await QRCode.toDataURL(qr, { margin: 1, scale: 6 });
         session.status = 'qr';
         sendEvent(session, 'qr', { image: dataUrl });
       } catch {}
     }
+
     if (connection === 'open') {
       try {
-        const credsPath = path.join(dir, 'creds.json');
+        const credsPath = path.join(session.dir, 'creds.json');
         const json = fs.readFileSync(credsPath, 'utf8');
         const sid = 'MJAPANI~' + Buffer.from(json).toString('base64');
         session.status = 'connected';
@@ -83,16 +84,42 @@ async function startSession(id, { pairingNumber } = {}) {
       } catch (e) {
         sendEvent(session, 'error', { message: 'Imeunganika lakini kusoma session kumeshindikana: ' + e.message });
       }
-      destroySession(id, 4000);
+      killSession(id, 4000);
+      return;
     }
-    if (connection === 'close' && session.status !== 'connected') {
-      sendEvent(session, 'error', { message: 'Muunganiko umekatika. Bonyeza "Anza upya" ujaribu tena.' });
-      destroySession(id, 1000);
+
+    if (connection === 'close') {
+      if (session.status === 'connected' || session.killed) return; // tayari imekamilika au imefungwa
+      const code = lastDisconnect?.error?.output?.statusCode;
+      if (code === DisconnectReason.loggedOut) {
+        sendEvent(session, 'error', { message: 'Kiungo kimekataliwa na WhatsApp. Bonyeza "Anza upya".' });
+        killSession(id, 500);
+        return;
+      }
+      // Muunganiko wa kawaida unaokatika wakati wa mchakato wa QR/pairing - unganisha upya
+      // kimya kimya, bila kumwambia mtumiaji ni hitilafu.
+      setTimeout(() => connect(id), 1200);
     }
   });
+}
 
+async function startSession(id, { pairingNumber } = {}) {
+  const dir = path.join(TMP, id);
+  fs.mkdirSync(dir, { recursive: true });
+  const session = {
+    dir, clients: new Set(), status: 'starting', sock: null,
+    pairingNumber: pairingNumber || null, pairingRequested: false, killed: false
+  };
+  sessions.set(id, session);
+  await connect(id);
   // usalama: futa session ikiwa haijakamilika ndani ya dakika 3
-  destroySession(id, 3 * 60 * 1000);
+  setTimeout(() => {
+    const s = sessions.get(id);
+    if (s && s.status !== 'connected') {
+      sendEvent(s, 'error', { message: 'Muda umeisha. Bonyeza "Anza upya" ujaribu tena.' });
+      killSession(id, 500);
+    }
+  }, 3 * 60 * 1000);
   return session;
 }
 
