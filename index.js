@@ -19,7 +19,8 @@ fs.mkdirSync(TMP, { recursive: true });
 
 const MAX_ACTIVE = 15;           // max simultaneous linking attempts
 const PER_IP_PER_10MIN = 6;      // max attempts per IP
-const SESSION_TTL_MS = 3 * 60 * 1000;
+const SESSION_TTL_MS = 6 * 60 * 1000;
+const CODE_REFRESH_MS = 50 * 1000; // issue a fresh pairing code regularly; only the newest one is valid
 
 // id -> { dir, clients:Set(res), status, sock, pairingNumber, pairingRequested, killed }
 const sessions = new Map();
@@ -47,6 +48,7 @@ function killSession(id, delay = 1000) {
   const s = sessions.get(id);
   if (!s || s.killed) return;
   s.killed = true;
+  clearInterval(s.refreshTimer);
   setTimeout(() => {
     try { s.sock?.ws?.close(); } catch {}
     try { s.sock?.end?.(undefined); } catch {}
@@ -73,6 +75,7 @@ async function connect(id) {
     markOnlineOnConnect: false
   });
   session.sock = sock;
+  let socketPaired = false; // per socket: after a reconnect a fresh code is issued
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', async (u) => {
@@ -81,17 +84,25 @@ async function connect(id) {
     // WhatsApp sends a "qr" once the handshake is ready: that is the right moment to ask for a pairing code
     if (qr && session.status !== 'connected') {
       if (session.pairingNumber) {
-        if (!session.pairingRequested && !sock.authState.creds.registered) {
-          session.pairingRequested = true;
-          try {
-            const raw = await sock.requestPairingCode(session.pairingNumber);
-            const code = raw.match(/.{1,4}/g).join('-');
-            session.status = 'code';
-            sendEvent(session, 'code', { code });
-          } catch (e) {
-            sendEvent(session, 'fail', { message: 'Could not create a pairing code. Please try again.' });
-            killSession(id, 500);
-          }
+        if (!socketPaired && !sock.authState.creds.registered) {
+          socketPaired = true;
+          const issueCode = async () => {
+            if (session.killed || session.status === 'connected' || session.sock !== sock) return clearInterval(session.refreshTimer);
+            try {
+              const raw = await sock.requestPairingCode(session.pairingNumber);
+            console.log(`[${id}] pairing code issued for number ending ${session.pairingNumber.slice(-3)}`);
+              session.status = 'code';
+              sendEvent(session, 'code', { code: raw.match(/.{1,4}/g).join('-'), expiresIn: Math.round(CODE_REFRESH_MS / 1000) });
+            } catch (e) {
+              if (!session.status || session.status === 'starting') {
+                sendEvent(session, 'fail', { message: 'Could not create a pairing code. Please try again.' });
+                killSession(id, 500);
+              }
+            }
+          };
+          clearInterval(session.refreshTimer);
+          await issueCode();
+          session.refreshTimer = setInterval(issueCode, CODE_REFRESH_MS);
         }
       } else {
         try {
@@ -103,8 +114,10 @@ async function connect(id) {
     }
 
     if (connection === 'open') {
+      console.log(`[${id}] linked OK`);
       if (session.status === 'connected') return;
       session.status = 'connected';
+      clearInterval(session.refreshTimer);
       try {
         // make sure creds are on disk before reading them
         await saveCreds();
@@ -130,13 +143,26 @@ async function connect(id) {
     if (connection === 'close') {
       if (session.status === 'connected' || session.killed) return;
       const code = lastDisconnect?.error?.output?.statusCode;
-      if (code === DisconnectReason.loggedOut) {
-        sendEvent(session, 'fail', { message: 'WhatsApp rejected the link. Please start again.' });
+      console.log(`[${id}] closed: status=${code} msg=${lastDisconnect?.error?.message} mode=${session.pairingNumber ? 'pair' : 'qr'} state=${session.status}`);
+
+      // Not paired yet (no account in creds). Reconnecting with half-made pairing creds makes WhatsApp
+      // reject the login, so start again from a clean folder and issue a fresh code/QR.
+      const notPaired = !sock.authState.creds.account;
+      if (notPaired && (session.retries || 0) < 3) {
+        session.retries = (session.retries || 0) + 1;
+        session.pairingRequested = false;
+        try { fs.rmSync(session.dir, { recursive: true, force: true }); fs.mkdirSync(session.dir, { recursive: true }); } catch {}
+        console.log(`[${id}] restarting clean (attempt ${session.retries})`);
+        setTimeout(() => connect(id).catch(e => console.log(`[${id}] reconnect error: ${e.message}`)), 1500);
+        return;
+      }
+      if (notPaired || code === DisconnectReason.loggedOut) {
+        sendEvent(session, 'fail', { message: 'Could not reach WhatsApp or the link was rejected. Please start again.' });
         killSession(id, 500);
         return;
       }
-      // Normal restart during linking (e.g. after the code is accepted): reconnect quietly
-      setTimeout(() => connect(id).catch(() => {}), 1200);
+      // Normal restart after a successful pairing: reconnect quietly
+      setTimeout(() => connect(id).catch(e => console.log(`[${id}] reconnect error: ${e.message}`)), 1200);
     }
   });
 }
@@ -146,7 +172,7 @@ async function startSession(id, { pairingNumber } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const session = {
     dir, clients: new Set(), status: 'starting', sock: null, last: null,
-    pairingNumber: pairingNumber || null, pairingRequested: false, killed: false
+    pairingNumber: pairingNumber || null, refreshTimer: null, killed: false
   };
   sessions.set(id, session);
   await connect(id);
