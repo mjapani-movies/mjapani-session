@@ -1,12 +1,16 @@
 {
   "name": "mjapani-session",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "type": "module",
   "main": "index.js",
-  "scripts": { "start": "node index.js" },
+  "scripts": {
+    "start": "node index.js",
+    "postinstall": "patch-package --patch-dir . --error-on-fail"
+  },
   "engines": { "node": ">=20" },
   "dependencies": {
-    "@whiskeysockets/baileys": "6.7.24",
+    "baileys": "7.0.0-rc14",
+    "patch-package": "8.0.1",
     "express": "^4.19.2",
     "pino": "^9.0.0",
     "qrcode": "^1.5.3"
