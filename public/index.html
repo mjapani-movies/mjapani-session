@@ -1,226 +1,166 @@
 <!DOCTYPE html>
-<html lang="sw">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#050505">
-<title>MJAPANI SESSION · LIVE</title>
+<title>MJAPANI SESSION</title>
 <style>
-  :root{
-    --bg:#050505;
-    --card:#121212;
-    --card-border:#2a1010;
-    --accent:#e11d2e;
-    --orange:#ff6b1a;
-    --text:#f5f5f5;
-    --muted:#a0a0a0;
-    --ok:#22c55e;
-    --err:#ef4444;
-  }
+  :root{--bg:#050505;--card:#121212;--line:#2a1010;--accent:#e11d2e;--text:#f5f5f5;--muted:#9a9a9a;--ok:#22c55e;--err:#ef4444}
   *{box-sizing:border-box;margin:0;padding:0}
-  body{
-    min-height:100vh;
-    background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(225,29,46,0.18),transparent),
-               radial-gradient(circle at 80% 80%,rgba(255,107,26,0.08),transparent),#050505;
-    color:var(--text);
-    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-    display:flex;align-items:flex-start;justify-content:center;
-    padding:28px 16px 40px;
-  }
-  .wrap{max-width:440px;width:100%;margin:0 auto}
-  .logo-wrap{text-align:center;margin-bottom:22px}
-  .logo-img{
-    width:180px;height:180px;object-fit:contain;border-radius:26px;
-    box-shadow:0 0 0 2px rgba(255,60,40,0.4),0 12px 40px rgba(225,29,46,0.35),0 0 60px rgba(225,29,46,0.15);
-  }
-  .live-badge{
-    display:inline-flex;align-items:center;gap:6px;
-    background:linear-gradient(135deg,#e11d2e,#c4111f);color:#fff;
-    font-size:11px;font-weight:800;letter-spacing:1.5px;
-    padding:5px 12px;border-radius:20px;margin-top:14px;
-    box-shadow:0 4px 15px rgba(225,29,46,0.4);
-  }
-  .live-dot{width:7px;height:7px;background:#fff;border-radius:50%;animation:pulse 1.4s ease-in-out infinite}
-  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.75)}}
-  .logo-title{margin-top:12px;font-size:22px;font-weight:800;letter-spacing:1px}
-  .logo-title span{color:var(--accent)}
-  .logo-sub{color:var(--muted);font-size:13px;margin-top:4px}
-  .card{
-    background:var(--card);border:1px solid var(--card-border);border-radius:20px;padding:24px;
-    box-shadow:0 20px 50px rgba(0,0,0,.5);position:relative;overflow:hidden;
-  }
-  .card::before{
-    content:"";position:absolute;top:0;left:0;right:0;height:2px;
-    background:linear-gradient(90deg,transparent,var(--accent),var(--orange),var(--accent),transparent);
-  }
-  .tabs{display:flex;gap:6px;margin-bottom:20px;background:#0a0a0a;padding:5px;border-radius:14px;border:1px solid #1f1f1f}
-  .tab{flex:1;text-align:center;padding:11px 8px;border-radius:10px;cursor:pointer;color:var(--muted);font-weight:700;font-size:13.5px;transition:.2s}
-  .tab.active{background:linear-gradient(135deg,var(--accent),#b91c1c);color:#fff;box-shadow:0 4px 14px rgba(225,29,46,.35)}
+  body{min-height:100vh;background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(225,29,46,.18),transparent),#050505;color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:28px 16px 40px}
+  .wrap{max-width:420px;width:100%;margin:0 auto}
+  header{text-align:center;margin-bottom:22px}
+  header img{width:120px;height:120px;border-radius:24px;box-shadow:0 0 0 2px rgba(255,60,40,.4),0 10px 36px rgba(225,29,46,.35)}
+  h1{margin-top:14px;font-size:22px;font-weight:800;letter-spacing:1px}
+  h1 span{color:var(--accent)}
+  header p{color:var(--muted);font-size:14px;margin-top:4px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:0 20px 50px rgba(0,0,0,.5)}
+  .tabs{display:flex;gap:6px;background:#0a0a0a;padding:5px;border-radius:14px;border:1px solid #1f1f1f;margin-bottom:18px}
+  .tab{flex:1;text-align:center;padding:11px 8px;border-radius:10px;cursor:pointer;color:var(--muted);font-weight:700;font-size:14px;border:0;background:none}
+  .tab.active{background:linear-gradient(135deg,var(--accent),#b91c1c);color:#fff}
   .panel{display:none}.panel.active{display:block}
-  input[type=text]{width:100%;padding:13px 15px;border-radius:12px;border:1px solid #2a2a2a;background:#0a0a0a;color:var(--text);font-size:15px;outline:none}
-  input[type=text]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(225,29,46,.2)}
-  label{font-size:12.5px;color:var(--muted);display:block;margin-bottom:7px;font-weight:500}
-  button.primary{
-    width:100%;margin-top:16px;padding:14px;border:none;border-radius:12px;
-    background:linear-gradient(135deg,var(--accent),#c4111f);color:#fff;font-size:15px;font-weight:700;cursor:pointer;
-    box-shadow:0 6px 20px rgba(225,29,46,.35);
-  }
-  button.primary:disabled{opacity:.45;cursor:not-allowed}
-  .qr-box{text-align:center;margin-top:18px}
-  .qr-box img{width:230px;height:230px;border-radius:16px;background:#fff;padding:10px;box-shadow:0 8px 30px rgba(0,0,0,.4)}
-  .code-box{text-align:center;margin-top:18px;font-size:32px;letter-spacing:8px;font-weight:800;background:#0a0a0a;border:1.5px dashed var(--accent);border-radius:14px;padding:20px;color:#fff}
-  .status{text-align:center;color:var(--muted);font-size:13.5px;margin-top:14px;min-height:20px;font-weight:500}
+  label{display:block;font-size:13px;color:var(--muted);margin-bottom:7px}
+  input{width:100%;padding:14px 15px;border-radius:12px;border:1px solid #2a2a2a;background:#0a0a0a;color:var(--text);font-size:16px;outline:none}
+  input:focus{border-color:var(--accent)}
+  .btn{width:100%;margin-top:14px;padding:14px;border:0;border-radius:12px;background:linear-gradient(135deg,var(--accent),#c4111f);color:#fff;font-size:15px;font-weight:700;cursor:pointer}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn.ghost{background:none;border:1.5px solid var(--ok);color:var(--ok)}
+  .code{margin-top:18px;text-align:center;font-size:30px;letter-spacing:5px;font-weight:800;background:#0a0a0a;border:1.5px dashed var(--accent);border-radius:14px;padding:18px 8px;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .hint{margin-top:10px;text-align:center;color:var(--muted);font-size:13px;line-height:1.5}
+  .qr{margin-top:18px;text-align:center}
+  .qr img{width:230px;height:230px;border-radius:16px;background:#fff;padding:10px}
+  .status{text-align:center;color:var(--muted);font-size:14px;margin-top:14px;min-height:20px}
   .status.err{color:var(--err)}.status.ok{color:var(--ok)}
-  .session-box{margin-top:18px}
-  textarea{width:100%;min-height:115px;background:#0a0a0a;color:var(--ok);border:1px solid #1a3a1a;border-radius:12px;padding:13px;font-size:12px;word-break:break-all;resize:vertical}
-  .copy-btn{width:100%;margin-top:12px;padding:13px;border-radius:12px;border:1.5px solid var(--ok);background:transparent;color:var(--ok);font-weight:700;cursor:pointer;font-size:14px}
-  .warn{font-size:12.5px;color:var(--muted);margin-top:12px;line-height:1.55;background:rgba(255,255,255,.03);padding:10px 12px;border-radius:10px;border-left:3px solid #333}
+  textarea{width:100%;height:110px;margin-top:8px;background:#0a0a0a;color:var(--ok);border:1px solid #1a3a1a;border-radius:12px;padding:12px;font-size:12px;word-break:break-all;resize:none}
   .hidden{display:none}
-  footer{text-align:center;color:#666;font-size:11.5px;margin-top:22px}
-  footer b{color:#999}
+  footer{text-align:center;color:#666;font-size:12px;margin-top:20px}
 </style>
 </head>
 <body>
-<noscript><p style="color:#fff;text-align:center;padding:20px">Washa JavaScript ili kutumia ukurasa huu.</p></noscript>
+<noscript><p style="text-align:center;padding:20px">Please enable JavaScript.</p></noscript>
 <div class="wrap">
-  <div class="logo-wrap">
-    <img class="logo-img" src="logo.jpg" width="180" height="180" alt="MJAPANI MOVIES" decoding="async">
-    <div class="live-badge"><span class="live-dot"></span> LIVE</div>
-    <div class="logo-title">MJAPANI <span>SESSION</span></div>
-    <p class="logo-sub">Pata SESSION ID yako ya WhatsApp bot kwa haraka</p>
-  </div>
+  <header>
+    <img src="logo.jpg" width="120" height="120" alt="Mjapani" decoding="async">
+    <h1>MJAPANI <span>SESSION</span></h1>
+    <p>Link WhatsApp and get your Session ID</p>
+  </header>
 
-  <div class="card">
+  <main class="card">
     <div class="tabs">
-      <div class="tab active" data-mode="qr">QR Code</div>
-      <div class="tab" data-mode="pair">Namba ya Simu</div>
+      <button class="tab active" data-mode="pair">Phone number</button>
+      <button class="tab" data-mode="qr">QR code</button>
     </div>
 
-    <div class="panel active" id="panel-qr">
-      <p class="warn">Fungua WhatsApp → Mipangilio → Vifaa vilivyounganishwa → Unganisha kifaa, kisha skani QR itakayotokea hapa chini.</p>
-      <button class="primary" id="btn-qr">Anza (Pata QR)</button>
-      <div class="qr-box hidden" id="qr-box"><img id="qr-img" alt="QR Code"></div>
-    </div>
+    <section class="panel active" id="panel-pair">
+      <label for="phone">WhatsApp number with country code</label>
+      <input id="phone" type="tel" inputmode="numeric" placeholder="255712345678" autocomplete="tel">
+      <button class="btn" id="btn-pair">Get pairing code</button>
+      <div class="code hidden" id="code"></div>
+      <p class="hint hidden" id="code-hint">WhatsApp → Settings → Linked devices → Link a device → <b>Link with phone number instead</b>, then enter this code.</p>
+    </section>
 
-    <div class="panel" id="panel-pair">
-      <label>Namba ya WhatsApp (bila +, mfano 255712345678)</label>
-      <input type="text" id="phone" placeholder="255712345678" inputmode="numeric">
-      <button class="primary" id="btn-pair">Pata Pairing Code</button>
-      <div class="code-box hidden" id="code-box"></div>
-      <p class="warn hidden" id="pair-hint">Fungua WhatsApp → Vifaa vilivyounganishwa → Unganisha kifaa → "Unganisha kwa namba ya simu" → ingiza code hii.</p>
-    </div>
+    <section class="panel" id="panel-qr">
+      <button class="btn" id="btn-qr">Show QR code</button>
+      <div class="qr hidden" id="qr"><img id="qr-img" alt="QR code"></div>
+      <p class="hint hidden" id="qr-hint">WhatsApp → Settings → Linked devices → Link a device, then scan.<br>Open this page on another device to scan it.</p>
+    </section>
 
-    <div class="status" id="status"></div>
+    <p class="status" id="status" role="status"></p>
 
-    <div class="session-box hidden" id="session-box">
-      <label>SESSION ID yako — IHIFADHI SALAMA</label>
-      <textarea id="session-text" readonly></textarea>
-      <button class="copy-btn" id="copy-btn">📋 Copy SESSION ID</button>
-      <p class="warn">Bandika hii kwenye Railway Variable <b>SESSION_ID</b> ya bot yako. Yeyote mwenye hii anaweza kuingia WhatsApp yako — usimtumie mtu yeyote.</p>
-    </div>
-  </div>
+    <section class="hidden" id="result">
+      <label for="sid">Your Session ID</label>
+      <textarea id="sid" readonly></textarea>
+      <button class="btn ghost" id="copy">Copy Session ID</button>
+      <p class="hint">It was also sent to your own WhatsApp chat. Keep it private: it gives full access to your account.</p>
+    </section>
+  </main>
 
-  <footer>MJAPANI SESSION · <b>LIVE</b> · tovuti binafsi ya kutengeneza session</footer>
+  <footer>MJAPANI SESSION</footer>
 </div>
 
 <script>
-  const tabs = document.querySelectorAll('.tab');
-  const panels = { qr: document.getElementById('panel-qr'), pair: document.getElementById('panel-pair') };
-  const statusEl = document.getElementById('status');
-  let currentES = null;
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var statusEl = $('status'), es = null;
 
-  function setStatus(msg, type) {
-    statusEl.textContent = msg || '';
-    statusEl.className = 'status' + (type ? ' ' + type : '');
+  function setStatus(msg, type) { statusEl.textContent = msg || ''; statusEl.className = 'status' + (type ? ' ' + type : ''); }
+  function show(id, on) { $(id).classList[on === false ? 'add' : 'remove']('hidden'); }
+
+  function reset() {
+    if (es) { es.close(); es = null; }
+    ['code', 'code-hint', 'qr', 'qr-hint', 'result'].forEach(function (i) { show(i, false); });
+    setStatus('');
   }
 
-  tabs.forEach(t => t.addEventListener('click', () => {
-    tabs.forEach(x => x.classList.remove('active'));
-    t.classList.add('active');
-    Object.values(panels).forEach(p => p.classList.remove('active'));
-    panels[t.dataset.mode].classList.add('active');
-    setStatus('');
-  }));
+  document.querySelectorAll('.tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('active'); });
+      document.querySelectorAll('.panel').forEach(function (p) { p.classList.remove('active'); });
+      t.classList.add('active');
+      $('panel-' + t.dataset.mode).classList.add('active');
+      reset();
+    });
+  });
 
   function listen(id) {
-    if (currentES) currentES.close();
-    const es = new EventSource('/api/events/' + id);
-    currentES = es;
-
-    es.addEventListener('qr', e => {
-      const { image } = JSON.parse(e.data);
-      document.getElementById('qr-box').classList.remove('hidden');
-      document.getElementById('qr-img').src = image;
-      setStatus('Skani QR hii haraka kabla haijaisha muda…');
+    es = new EventSource('/api/events/' + id);
+    es.addEventListener('code', function (e) {
+      $('code').textContent = JSON.parse(e.data).code;
+      show('code'); show('code-hint');
+      setStatus('Enter the code in WhatsApp within 2 minutes.');
     });
-    es.addEventListener('code', e => {
-      const { code } = JSON.parse(e.data);
-      const box = document.getElementById('code-box');
-      box.textContent = code;
-      box.classList.remove('hidden');
-      document.getElementById('pair-hint').classList.remove('hidden');
-      setStatus('Ingiza code hii WhatsApp yako sasa…');
+    es.addEventListener('qr', function (e) {
+      $('qr-img').src = JSON.parse(e.data).image;
+      show('qr'); show('qr-hint');
+      setStatus('Scan the QR code. It refreshes automatically.');
     });
-    es.addEventListener('session', e => {
-      const { sessionId } = JSON.parse(e.data);
-      document.getElementById('session-box').classList.remove('hidden');
-      document.getElementById('session-text').value = sessionId;
-      setStatus('✅ Umeunganishwa! SESSION ID iko tayari.', 'ok');
+    es.addEventListener('session', function (e) {
+      $('sid').value = JSON.parse(e.data).sessionId;
+      ['code', 'code-hint', 'qr', 'qr-hint'].forEach(function (i) { show(i, false); });
+      show('result');
+      setStatus('Linked successfully.', 'ok');
       es.close();
     });
-    // 'error' ni tukio la server (lina data) AU la mtandao (halina data)
-    es.addEventListener('error', e => {
-      if (e.data) {
-        let message = 'Hitilafu imetokea';
-        try { message = JSON.parse(e.data).message || message; } catch (_) {}
-        setStatus('❌ ' + message, 'err');
-        es.close();
-      } else if (es.readyState === EventSource.CLOSED) {
-        setStatus('❌ Muunganisho umekatika. Jaribu tena.', 'err');
-      } else {
-        setStatus('Mtandao unasumbua, inajaribu tena…');
-      }
+    es.addEventListener('fail', function (e) {
+      setStatus(JSON.parse(e.data).message, 'err');
+      es.close();
     });
   }
 
-  async function start(body, btn) {
+  function start(body, btn) {
+    reset();
     btn.disabled = true;
-    try {
-      const r = await fetch('/api/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      let j = {};
-      try { j = await r.json(); } catch (_) {}
-      if (!r.ok) { setStatus('❌ ' + (j.error || 'Server imekataa ombi (' + r.status + ')'), 'err'); return; }
-      listen(j.id);
-    } catch (err) {
-      setStatus('❌ Imeshindwa kufikia server. Angalia mtandao wako.', 'err');
-    } finally {
-      btn.disabled = false;
-    }
+    setStatus('Please wait…');
+    fetch('/api/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        if (!x.ok) return setStatus(x.j.error || 'Something went wrong. Please try again.', 'err');
+        listen(x.j.id);
+      })
+      .catch(function () { setStatus('Could not reach the server. Check your connection.', 'err'); })
+      .then(function () { btn.disabled = false; });
   }
 
-  document.getElementById('btn-qr').addEventListener('click', e => {
-    setStatus('Inatengeneza QR…');
-    start({ mode: 'qr' }, e.currentTarget);
+  $('btn-pair').addEventListener('click', function () {
+    var number = $('phone').value.replace(/\D/g, '');
+    if (number.length < 9) return setStatus('Enter your number with country code, e.g. 255712345678.', 'err');
+    start({ mode: 'pair', number: number }, this);
+  });
+  $('btn-qr').addEventListener('click', function () { start({ mode: 'qr' }, this); });
+
+  $('code').addEventListener('click', function () {
+    if (navigator.clipboard) navigator.clipboard.writeText(this.textContent.replace(/-/g, '')).then(function () { setStatus('Code copied.', 'ok'); }, function () {});
   });
 
-  document.getElementById('btn-pair').addEventListener('click', e => {
-    const number = document.getElementById('phone').value.replace(/\D/g, '');
-    if (number.length < 8) return setStatus('❌ Weka namba sahihi, mfano 255712345678', 'err');
-    setStatus('Inatengeneza pairing code…');
-    start({ mode: 'pair', number }, e.currentTarget);
-  });
-
-  document.getElementById('copy-btn').addEventListener('click', async () => {
-    const ta = document.getElementById('session-text');
+  $('copy').addEventListener('click', function () {
+    var ta = $('sid');
     ta.select();
-    try { await navigator.clipboard.writeText(ta.value); }
-    catch (_) { document.execCommand('copy'); }
-    setStatus('✅ Imenakiliwa (copied)!', 'ok');
+    var done = function () { setStatus('Session ID copied.', 'ok'); };
+    if (navigator.clipboard) navigator.clipboard.writeText(ta.value).then(done, function () { document.execCommand('copy'); done(); });
+    else { document.execCommand('copy'); done(); }
   });
+})();
 </script>
 </body>
 </html>
