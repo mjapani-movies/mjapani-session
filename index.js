@@ -5,9 +5,17 @@ import crypto from 'crypto';
 import QRCode from 'qrcode';
 import pino from 'pino';
 import baileysPkg, {
-  useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, Browsers, jidNormalizedUser
-} from '@whiskeysockets/baileys';
+  useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, Browsers, fetchLatestWaWebVersion, jidNormalizedUser
+} from 'baileys';
 const makeWASocket = baileysPkg.default || baileysPkg;
+
+// WhatsApp rejects linking from outdated client versions, so use the live WA Web version when possible
+async function getWaVersion() {
+  try { const r = await fetchLatestWaWebVersion(); if (r?.version) return r.version; } catch {}
+  const { version } = await fetchLatestBaileysVersion();
+  return version;
+}
+
 
 const app = express();
 app.set('trust proxy', 1);
@@ -63,7 +71,7 @@ async function connect(id) {
   if (!session || session.killed) return;
 
   const { state, saveCreds } = await useMultiFileAuthState(session.dir);
-  const { version } = await fetchLatestBaileysVersion();
+  const version = await getWaVersion();
   const sock = makeWASocket({
     version,
     auth: state,
