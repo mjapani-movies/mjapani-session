@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import QRCode from 'qrcode';
 import pino from 'pino';
 import baileysPkg, {
-  useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, Browsers, fetchLatestWaWebVersion, jidNormalizedUser
+  useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, Browsers, fetchLatestWaWebVersion, jidNormalizedUser, BufferJSON
 } from 'baileys';
 const makeWASocket = baileysPkg.default || baileysPkg;
 
@@ -24,6 +24,79 @@ app.use(express.static(path.join(process.cwd(), 'public'), { maxAge: '1h' }));
 
 const TMP = '/tmp/mjapani-sessions';
 fs.mkdirSync(TMP, { recursive: true });
+
+// ---------- Persistent session store (encrypted at rest) ----------
+// Mount a Railway Volume and set DATA_DIR to its path (e.g. /data) so sessions survive redeploys.
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+const STORE_DIR = path.join(DATA_DIR, 'sessions');
+fs.mkdirSync(STORE_DIR, { recursive: true });
+const TTL_MS = Number(process.env.SESSION_TTL_HOURS || 24) * 3600 * 1000;
+const MAX_FETCH = Number(process.env.SESSION_MAX_FETCH || 5);
+
+function loadSecret() {
+  if (process.env.SESSION_SECRET) return crypto.createHash('sha256').update(process.env.SESSION_SECRET).digest();
+  const f = path.join(DATA_DIR, '.secret');
+  if (!fs.existsSync(f)) fs.writeFileSync(f, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
+  return crypto.createHash('sha256').update(fs.readFileSync(f, 'utf8')).digest();
+}
+const SECRET = loadSecret();
+
+function encrypt(text) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', SECRET, iv);
+  const enc = Buffer.concat([c.update(text, 'utf8'), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), enc]);
+}
+function decrypt(buf) {
+  const d = crypto.createDecipheriv('aes-256-gcm', SECRET, buf.subarray(0, 12));
+  d.setAuthTag(buf.subarray(12, 28));
+  return Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString('utf8');
+}
+const ID_RE = /^mjapani_[a-f0-9]{36}$/;
+const recPath = (id) => path.join(STORE_DIR, id + '.bin');
+function writeRecord(id, rec) {
+  const tmp = recPath(id) + '.tmp';
+  fs.writeFileSync(tmp, encrypt(JSON.stringify(rec)), { mode: 0o600 });
+  fs.renameSync(tmp, recPath(id));
+}
+function readRecord(id) {
+  try { return JSON.parse(decrypt(fs.readFileSync(recPath(id)))); } catch { return null; }
+}
+function storeSession(json) {
+  const id = 'mjapani_' + crypto.randomBytes(18).toString('hex');
+  writeRecord(id, { created: Date.now(), fetches: 0, data: json });
+  return id;
+}
+setInterval(() => { // remove expired sessions
+  for (const f of fs.readdirSync(STORE_DIR)) {
+    const p = path.join(STORE_DIR, f);
+    try { if (Date.now() - fs.statSync(p).mtimeMs > TTL_MS + 3600 * 1000) fs.rmSync(p, { force: true }); } catch {}
+  }
+}, 30 * 60 * 1000).unref();
+
+// Build the { creds, keys } document that Levanter expects, from the temporary auth folder
+const KEY_TYPES = ['app-state-sync-version', 'app-state-sync-key', 'sender-key-memory', 'sender-key', 'lid-mapping', 'device-list', 'pre-key', 'session', 'tctoken'];
+function snapshot(dir) {
+  const creds = JSON.parse(fs.readFileSync(path.join(dir, 'creds.json'), 'utf8'), BufferJSON.reviver);
+  const keys = {};
+  for (const f of fs.readdirSync(dir)) {
+    if (f === 'creds.json' || !f.endsWith('.json')) continue;
+    const base = f.slice(0, -5);
+    const type = KEY_TYPES.find(t => base.startsWith(t + '-'));
+    if (!type) continue;
+    const kid = base.slice(type.length + 1).replace(/__/g, '/');
+    try { (keys[type] ||= {})[kid] = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'), BufferJSON.reviver); } catch {}
+  }
+  return JSON.stringify({ creds, keys }, BufferJSON.replacer);
+}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const fetchHits = new Map();
+function fetchLimited(ip) {
+  const now = Date.now();
+  const list = (fetchHits.get(ip) || []).filter(t => now - t < 10 * 60 * 1000);
+  list.push(now); fetchHits.set(ip, list);
+  return list.length > 60;
+}
 
 const MAX_ACTIVE = 15;           // max simultaneous linking attempts
 const PER_IP_PER_10MIN = 6;      // max attempts per IP
@@ -125,12 +198,11 @@ async function connect(id) {
       console.log(`[${id}] linked OK`);
       if (session.status === 'connected') return;
       session.status = 'connected';
-      clearInterval(session.refreshTimer);
+      sendEvent(session, 'linked', {});
       try {
-        // make sure creds are on disk before reading them
+        await sleep(8000); // let WhatsApp deliver the first sync keys before we take the snapshot
         await saveCreds();
-        const json = fs.readFileSync(path.join(session.dir, 'creds.json'), 'utf8');
-        const sid = 'MJAPANI~' + Buffer.from(json).toString('base64');
+        const sid = storeSession(snapshot(session.dir));
         sendEvent(session, 'session', { sessionId: sid });
 
         // Also deliver it straight to the user's own WhatsApp chat
@@ -138,11 +210,12 @@ async function connect(id) {
           const me = jidNormalizedUser(sock.user.id);
           await sock.sendMessage(me, { text: sid });
           await sock.sendMessage(me, {
-            text: '✅ *MJAPANI SESSION*\nThe message above is your SESSION ID.\nPaste it in your bot as the variable *SESSION_ID*.\n⚠️ Never share it with anyone.'
+            text: '✅ *MJAPANI SESSION*\nThe message above is your SESSION_ID.\nPaste it in your bot as the variable *SESSION_ID*.\n⚠️ Never share it with anyone.'
           });
         } catch {}
       } catch (e) {
-        sendEvent(session, 'fail', { message: 'Linked, but the session could not be read. Please try again.' });
+        console.log(`[${id}] snapshot error: ${e.message}`);
+        sendEvent(session, 'fail', { message: 'Linked, but the session could not be saved. Please try again.' });
       }
       killSession(id, 8000);
       return;
@@ -227,6 +300,22 @@ app.get('/api/events/:id', (req, res) => {
   if (session.last) res.write(`event: ${session.last.event}\ndata: ${JSON.stringify(session.last.data)}\n\n`);
   const beat = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
   req.on('close', () => { clearInterval(beat); session.clients.delete(res); });
+});
+
+// Levanter fetches its session from here (see mjapani-preload.js in the bot repo)
+app.get('/json/:id/:token?', (req, res) => {
+  const id = req.params.id;
+  if (!ID_RE.test(id)) return res.status(404).end();
+  if (fetchLimited(req.ip)) return res.status(429).end();
+  const rec = readRecord(id);
+  if (!rec) return res.status(404).end();
+  if (Date.now() - rec.created > TTL_MS || rec.fetches >= MAX_FETCH) {
+    fs.rmSync(recPath(id), { force: true });
+    return res.status(404).end();
+  }
+  rec.fetches += 1;
+  writeRecord(id, rec);
+  res.set('Cache-Control', 'no-store').type('application/json').send(rec.data);
 });
 
 app.get('/health', (_req, res) => res.json({ ok: true, active: sessions.size }));
