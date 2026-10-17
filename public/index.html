@@ -57,7 +57,7 @@
       <input id="phone" type="tel" inputmode="numeric" placeholder="255712345678" autocomplete="tel">
       <button class="btn" id="btn-pair">Get pairing code</button>
       <div class="code hidden" id="code"></div>
-      <p class="hint hidden" id="code-hint">WhatsApp → Settings → Linked devices → Link a device → <b>Link with phone number instead</b>, then enter this code.</p>
+      <p class="hint hidden" id="code-hint">Open WhatsApp yourself: Settings → Linked devices → Link a device → <b>Link with phone number instead</b>, then type the code shown here. Do not wait for the notification. Always use the newest code.</p>
     </section>
 
     <section class="panel" id="panel-qr">
@@ -87,7 +87,16 @@
   function setStatus(msg, type) { statusEl.textContent = msg || ''; statusEl.className = 'status' + (type ? ' ' + type : ''); }
   function show(id, on) { $(id).classList[on === false ? 'add' : 'remove']('hidden'); }
 
+  var timer = null;
+  function startCountdown(sec) {
+    clearInterval(timer);
+    var left = sec;
+    var tick = function () { setStatus('Enter this code in WhatsApp. A new code appears in ' + left + 's.'); if (left-- <= 0) clearInterval(timer); };
+    tick(); timer = setInterval(tick, 1000);
+  }
+
   function reset() {
+    clearInterval(timer);
     if (es) { es.close(); es = null; }
     ['code', 'code-hint', 'qr', 'qr-hint', 'result'].forEach(function (i) { show(i, false); });
     setStatus('');
@@ -106,23 +115,30 @@
   function listen(id) {
     es = new EventSource('/api/events/' + id);
     es.addEventListener('code', function (e) {
-      $('code').textContent = JSON.parse(e.data).code;
+      var d = JSON.parse(e.data);
+      $('code').textContent = d.code;
       show('code'); show('code-hint');
-      setStatus('Enter the code in WhatsApp within 2 minutes.');
+      startCountdown(d.expiresIn || 50);
     });
     es.addEventListener('qr', function (e) {
       $('qr-img').src = JSON.parse(e.data).image;
       show('qr'); show('qr-hint');
       setStatus('Scan the QR code. It refreshes automatically.');
     });
+    es.addEventListener('linked', function () {
+      ['code', 'code-hint', 'qr', 'qr-hint'].forEach(function (i) { show(i, false); });
+      setStatus('Linked. Preparing your Session ID…', 'ok');
+    });
     es.addEventListener('session', function (e) {
       $('sid').value = JSON.parse(e.data).sessionId;
       ['code', 'code-hint', 'qr', 'qr-hint'].forEach(function (i) { show(i, false); });
       show('result');
+      clearInterval(timer);
       setStatus('Linked successfully.', 'ok');
       es.close();
     });
     es.addEventListener('fail', function (e) {
+      clearInterval(timer);
       setStatus(JSON.parse(e.data).message, 'err');
       es.close();
     });
